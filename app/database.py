@@ -1,5 +1,3 @@
-
-
 from sqlmodel import create_engine, Session
 
 DATABASE_URL = "postgresql+psycopg2://postgres:ashwith@localhost:5432/trade_finance"
