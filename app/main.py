@@ -1,5 +1,3 @@
-# app/main.py
-
 import jwt
 from fastapi import FastAPI, Depends, HTTPException, Response, Cookie
 from sqlmodel import SQLModel, Session, select

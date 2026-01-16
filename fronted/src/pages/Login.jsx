@@ -6,7 +6,6 @@ function Login() {
   const [password, setPassword] = useState("");
 
   const login = async () => {
-    console.log("LOGIN BUTTON CLICKED"); 
     try {
       const res = await api.post("/login", null, {
         params: {
