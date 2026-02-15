@@ -1,6 +1,8 @@
 import os
 import jwt
 import hashlib
+import csv
+
 
 from fastapi import (
     FastAPI,
@@ -12,10 +14,10 @@ from fastapi import (
     File,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from sqlmodel import SQLModel, Session, select
-from sqlalchemy import asc
+from sqlalchemy import asc, func
 
 from app.database import engine, get_session
 from app.models import User, Document, LedgerEntry, Transaction
@@ -29,6 +31,7 @@ from app.auth import (
 )
 
 from jwt import ExpiredSignatureError, InvalidTokenError
+from io import StringIO
 
 
 # ---------------- CONFIG ----------------
@@ -183,6 +186,23 @@ def upload_document(
     current_user: dict = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
+    role = current_user["role"]
+
+    # 🔒 Role-based protection
+    if role not in ["buyer", "seller"]:
+        raise HTTPException(status_code=403, detail="Only buyer or seller can upload documents")
+
+    # 🔒 Role → Allowed document types
+    role_doc_map = {
+        "buyer": ["PO"],
+        "seller": ["BOL", "INVOICE"],
+    }
+
+    if doc_type not in role_doc_map[role]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"{role} is not allowed to upload {doc_type} documents"
+        )
 
     os.makedirs("files", exist_ok=True)
 
@@ -192,12 +212,6 @@ def upload_document(
     file_path = f"files/{file.filename}"
     with open(file_path, "wb") as f:
         f.write(file_bytes)
-
-    allowed_types = ["PO", "BOL", "LOC", "INVOICE"]
-
-    if doc_type not in allowed_types:
-        raise HTTPException(status_code=400, detail="Invalid document type")
-
 
     document = Document(
         doc_type=doc_type,
@@ -1146,3 +1160,239 @@ def run_integrity_check_now(
     integrity_check_job.delay()
     return {"message": "Integrity check triggered"}
 
+
+# week 7
+
+@app.get("/dashboard/risk-score")
+def get_user_risk_score(
+    user_id: int,
+    current_user: dict = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    # Only admin/auditor can view any user's risk
+    if current_user["role"] not in ["admin", "auditor"] and current_user["user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    # Count completed transactions
+    completed_count = session.exec(
+        select(func.count())
+        .where(
+            ((Transaction.buyer_id == user_id) | (Transaction.seller_id == user_id)) &
+            (Transaction.status == "completed")
+        )
+    ).one()
+
+    # Count disputed transactions
+    disputed_count = session.exec(
+        select(func.count())
+        .where(
+            ((Transaction.buyer_id == user_id) | (Transaction.seller_id == user_id)) &
+            (Transaction.status == "disputed")
+        )
+    ).one()
+
+    total = completed_count + disputed_count
+    risk_percent = (disputed_count / total) * 100 if total > 0 else 0
+
+    return {
+        "user_id": user_id,
+        "completed": completed_count,
+        "disputed": disputed_count,
+        "risk_percent": round(risk_percent, 2),
+    }
+
+
+@app.get("/dashboard/org/totals")
+def get_org_totals(
+    org_name: str,
+    current_user: dict = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    if current_user["role"] not in ["admin"] and current_user["org"] != org_name:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    # Total bought by org
+    total_bought = session.exec(
+        select(func.coalesce(func.sum(Transaction.amount), 0))
+        .join(User, Transaction.buyer_id == User.id)
+        .where(User.org_name == org_name)
+    ).one()
+
+    # Total sold by org
+    total_sold = session.exec(
+        select(func.coalesce(func.sum(Transaction.amount), 0))
+        .join(User, Transaction.seller_id == User.id)
+        .where(User.org_name == org_name)
+    ).one()
+
+    total_amount = float(total_bought) + float(total_sold)
+
+    return {
+        "org": org_name,
+        "total_bought": float(total_bought),
+        "total_sold": float(total_sold),
+        "total_amount": total_amount,
+    }
+
+
+@app.get("/dashboard/org/status-breakdown")
+def get_org_status_breakdown(
+    org_name: str,
+    current_user: dict = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    if current_user["role"] not in ["admin"] and current_user["org"] != org_name:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    rows = session.exec(
+        select(Transaction.status, func.count())
+        .join(User, Transaction.buyer_id == User.id)
+        .where(User.org_name == org_name)
+        .group_by(Transaction.status)
+    ).all()
+
+    breakdown = {status: count for status, count in rows}
+
+    return {
+        "org": org_name,
+        "breakdown": breakdown
+    }
+
+
+@app.get("/dashboard/top-risky-users")
+def top_risky_users(
+    current_user: dict = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    if current_user["role"] not in ["admin", "auditor"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    users = session.exec(select(User)).all()
+
+    user_risks = []
+
+    for user in users:
+        completed = session.exec(
+            select(func.count())
+            .where(
+                ((Transaction.buyer_id == user.id) | (Transaction.seller_id == user.id)) &
+                (Transaction.status == "completed")
+            )
+        ).one()
+
+        disputed = session.exec(
+            select(func.count())
+            .where(
+                ((Transaction.buyer_id == user.id) | (Transaction.seller_id == user.id)) &
+                (Transaction.status == "disputed")
+            )
+        ).one()
+
+        total = completed + disputed
+        risk = (disputed / total) * 100 if total > 0 else 0
+
+        user_risks.append({
+            "user_id": user.id,
+            "name": user.name,
+            "org": user.org_name,
+            "risk_percent": round(risk, 2)
+        })
+
+    top3 = sorted(user_risks, key=lambda x: x["risk_percent"], reverse=True)[:3]
+
+    return top3
+
+
+
+@app.get("/dashboard/top-volume-users")
+def top_volume_users(
+    current_user: dict = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    if current_user["role"] not in ["admin", "auditor"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    users = session.exec(select(User)).all()
+    user_volumes = []
+
+    for user in users:
+        total_amount = session.exec(
+            select(func.coalesce(func.sum(Transaction.amount), 0))
+            .where(
+                (Transaction.buyer_id == user.id) |
+                (Transaction.seller_id == user.id)
+            )
+        ).one()
+
+        user_volumes.append({
+            "user_id": user.id,
+            "name": user.name,
+            "org": user.org_name,
+            "total_amount": float(total_amount)
+        })
+
+    top3 = sorted(user_volumes, key=lambda x: x["total_amount"], reverse=True)[:3]
+
+    return top3
+
+
+@app.get("/dashboard/corrupted-docs")
+def corrupted_docs(
+    current_user: dict = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    if current_user["role"] not in ["admin", "auditor"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    logs = session.exec(
+        select(AuditLog)
+        .where(AuditLog.action == "INTEGRITY_MISMATCH")
+        .order_by(AuditLog.timestamp.desc())
+    ).all()
+
+    return [
+        {
+            "doc_id": log.target_id,
+            "timestamp": log.timestamp,
+            "action": log.action
+        }
+        for log in logs
+    ]
+
+
+@app.get("/dashboard/org/export")
+def export_org_dashboard_csv(
+    org_name: str,
+    current_user: dict = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    if current_user["role"] not in ["admin"] and current_user["org"] != org_name:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    # Fetch data
+    totals = get_org_totals(org_name, current_user, session)
+    breakdown_resp = get_org_status_breakdown(org_name, current_user, session)
+    breakdown = breakdown_resp["breakdown"]
+
+    # Create CSV
+    output = StringIO()
+    writer = csv.writer(output)
+
+    writer.writerow(["Metric", "Value"])
+    writer.writerow(["Total Bought", totals["total_bought"]])
+    writer.writerow(["Total Sold", totals["total_sold"]])
+    writer.writerow(["Total Amount", totals["total_amount"]])
+
+    writer.writerow([])
+    writer.writerow(["Status", "Count"])
+
+    for status, count in breakdown.items():
+        writer.writerow([status, count])
+
+    output.seek(0)
+
+    return StreamingResponse(
+        output,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={org_name}_dashboard.csv"},
+    )

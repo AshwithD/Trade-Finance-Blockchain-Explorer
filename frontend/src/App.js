@@ -6,6 +6,8 @@ import DocumentDetail from "./pages/DocumentDetail";
 import UploadDocument from "./pages/UploadDocument";
 import Transactions from "./pages/Transactions";
 import TransactionDetail from "./pages/TransactionDetail";
+import Dashboard from "./pages/Dashboard";
+
 
 
 function App() {
@@ -19,6 +21,8 @@ function App() {
         <Route path="/upload" element={<UploadDocument />} />
         <Route path="/transactions" element={<Transactions />} />
         <Route path="/transaction/:id" element={<TransactionDetail />} />
+        <Route path="/dashboard" element={<Dashboard />} />
+
       </Routes>
     </BrowserRouter>
   );
