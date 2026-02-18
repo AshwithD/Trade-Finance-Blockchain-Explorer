@@ -6,6 +6,15 @@ function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [isRegister, setIsRegister] = useState(false);
+  const [name, setName] = useState("");
+  const [org, setOrg] = useState("");
+  const [role, setRole] = useState("buyer");
+  //const [photoUrl, setPhotoUrl] = useState(""); // ✅ NEW
+  const [photo, setPhoto] = useState(null);
+
+  const inputClass =
+    "w-full p-2.5 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition";
 
   const login = async () => {
     setError("");
@@ -13,37 +22,55 @@ function Login() {
 
     try {
       const res = await api.post("/login", null, {
-        params: {
-          email: email,
-          password: password
-        }
+        params: { email, password }
       });
 
       localStorage.setItem("accessToken", res.data.access_token);
 
-      // Decode token
       const payload = JSON.parse(atob(res.data.access_token.split(".")[1]));
       localStorage.setItem("role", payload.role);
       localStorage.setItem("user_id", payload.user_id);
       localStorage.setItem("org", payload.org);
+      localStorage.setItem("name", payload.name);
 
-      window.location.href = "/profile";
+      window.location.href = "/dashboard";
     } catch (err) {
-      console.log(err);
       setError("Invalid email or password");
     } finally {
       setLoading(false);
     }
   };
 
+  const register = async () => {
+    try {
+      const formData = new FormData();   // ✅ create FormData
+      formData.append("name", name);
+      formData.append("email", email);
+      formData.append("password", password);
+      formData.append("role", role);
+      formData.append("org_name", org);
+      if (photo) formData.append("photo", photo); // ✅ attach file
+
+      await api.post("/create-user", formData, {
+        headers: { "Content-Type": "multipart/form-data" }
+      });
+
+      alert("User created. Now login.");
+      setIsRegister(false);
+      setPhoto(null);
+    } catch (err) {
+      alert("Registration failed");
+    }
+  };
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-gray-100">
-      <div className="bg-white p-8 rounded-xl shadow-lg w-full max-w-md">
-        <h2 className="text-3xl font-bold text-center text-gray-800 mb-2">
+      <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md animate-fade-in">
+        <h2 className="text-3xl font-bold text-center text-gray-800 mb-1">
           Trade Finance Explorer
         </h2>
         <p className="text-center text-gray-500 mb-6">
-          Sign in to continue
+          {isRegister ? "Create your account" : "Sign in to continue"}
         </p>
 
         {error && (
@@ -52,43 +79,99 @@ function Login() {
           </div>
         )}
 
-        <div className="mb-4">
-          <label className="block text-sm font-medium text-gray-600 mb-1">
-            Email
-          </label>
+        {isRegister && (
+          <>
+            <div className="mb-3">
+              <label className="text-sm text-gray-600">Full Name</label>
+              <input
+                className={inputClass}
+                placeholder="Ashwith D"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+
+            <div className="mb-3">
+              <label className="text-sm text-gray-600">Organization</label>
+              <input
+                className={inputClass}
+                placeholder="ABC Exports Ltd."
+                value={org}
+                onChange={(e) => setOrg(e.target.value)}
+              />
+            </div>
+
+            <div className="mb-3">
+              <label className="text-sm text-gray-600">Role</label>
+              <select
+                className={inputClass}
+                value={role}
+                onChange={(e) => setRole(e.target.value)}
+              >
+                <option value="buyer">Buyer</option>
+                <option value="seller">Seller</option>
+                <option value="bank">Bank</option>
+                <option value="auditor">Auditor</option>
+              </select>
+            </div>
+
+            {/* ✅ NEW: Profile Photo URL */}
+            <div className="mb-4">
+              <label className="text-sm text-gray-600">Profile Photo (optional)</label>
+              <input
+                type="file"
+                accept="image/*"
+                className="w-full text-sm"
+                onChange={(e) => setPhoto(e.target.files[0])}
+              />
+              </div>
+          </>
+        )}
+
+        <div className="mb-3">
+          <label className="text-sm text-gray-600">Email</label>
           <input
-            type="text"
+            type="email"
+            className={inputClass}
             placeholder="you@example.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
 
         <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-600 mb-1">
-            Password
-          </label>
+          <label className="text-sm text-gray-600">Password</label>
           <input
             type="password"
+            className={inputClass}
             placeholder="••••••••"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
 
         <button
-          onClick={login}
+          onClick={isRegister ? register : login}
           disabled={loading}
-          className={`w-full py-2 rounded text-white transition 
-            ${loading ? "bg-blue-400 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700"}
+          className={`w-full py-2.5 rounded-lg text-white font-medium transition-all duration-200 
+            ${loading ? "bg-blue-400 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700 hover:shadow-md"}
           `}
         >
-          {loading ? "Logging in..." : "Login"}
+          {loading ? "Please wait..." : isRegister ? "Create Account" : "Login"}
         </button>
 
-        <p className="text-xs text-center text-gray-400 mt-4">
+        <div className="text-center mt-5">
+          <button
+            onClick={() => setIsRegister(!isRegister)}
+            className="text-blue-600 text-sm hover:underline"
+          >
+            {isRegister
+              ? "Already have an account? Login"
+              : "New user? Create an account"}
+          </button>
+        </div>
+
+        <p className="text-xs text-center text-gray-400 mt-6">
           © Trade Finance Blockchain Explorer
         </p>
       </div>

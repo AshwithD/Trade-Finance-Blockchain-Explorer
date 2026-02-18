@@ -12,15 +12,17 @@ from fastapi import (
     Cookie,
     UploadFile,
     File,
+    Form,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 
 from sqlmodel import SQLModel, Session, select
 from sqlalchemy import asc, func
+from sqlalchemy.orm import aliased
 
 from app.database import engine, get_session
-from app.models import User, Document, LedgerEntry, Transaction
+from app.models import User, Document, LedgerEntry, Transaction, AuditLog, RiskScore
 from app.auth import (
     create_access_token,
     create_refresh_token,
@@ -32,6 +34,9 @@ from app.auth import (
 
 from jwt import ExpiredSignatureError, InvalidTokenError
 from io import StringIO
+
+from fastapi.staticfiles import StaticFiles
+
 
 
 # ---------------- CONFIG ----------------
@@ -51,6 +56,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
 # ---------------- DB INIT ----------------
 
 SQLModel.metadata.create_all(engine)
@@ -59,16 +67,25 @@ SQLModel.metadata.create_all(engine)
 
 @app.post("/create-user")
 def create_user(
-    name: str,
-    email: str,
-    password: str,
-    role: str,
-    org_name: str,
+    name: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...),
+    role: str = Form(...),
+    org_name: str = Form(...),
+    photo: UploadFile = File(None),
     session: Session = Depends(get_session),
 ):
     existing = session.exec(select(User).where(User.email == email)).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
+
+    photo_url = None
+    if photo:
+        os.makedirs("uploads", exist_ok=True)
+        path = f"uploads/{email}_{photo.filename}"
+        with open(path, "wb") as f:
+            f.write(photo.file.read())
+        photo_url = path
 
     user = User(
         name=name,
@@ -76,6 +93,7 @@ def create_user(
         password=hash_password(password),
         role=role,
         org_name=org_name,
+        photo_url=photo_url
     )
 
     session.add(user)
@@ -83,6 +101,7 @@ def create_user(
     session.refresh(user)
 
     return {"message": "User created"}
+
 
 
 @app.post("/login")
@@ -102,6 +121,7 @@ def login(
             "user_id": user.id,
             "role": user.role,
             "org": user.org_name,
+            "name": user.name,
         }
     )
 
@@ -164,6 +184,7 @@ def get_user_profile(
         "email": user.email,
         "org": user.org_name,
         "role": user.role,
+        "photo_url": user.photo_url,
     }
 
 
@@ -937,6 +958,8 @@ def pay_invoice_for_transaction(
     }
 
 
+from sqlalchemy.orm import aliased
+
 @app.get("/transactions")
 def list_transactions(
     current_user: dict = Depends(get_current_user),
@@ -945,27 +968,41 @@ def list_transactions(
     role = current_user["role"]
     user_id = current_user["user_id"]
 
-    # Buyer sees transactions where they are buyer
+    Buyer = aliased(User)
+    Seller = aliased(User)
+
+    query = (
+        select(
+            Transaction,
+            Buyer.name.label("buyer_name"),
+            Seller.name.label("seller_name"),
+        )
+        .join(Buyer, Transaction.buyer_id == Buyer.id)
+        .join(Seller, Transaction.seller_id == Seller.id)
+    )
+
+    # Role-based filtering
     if role == "buyer":
-        txs = session.exec(select(Transaction).where(Transaction.buyer_id == user_id)).all()
-    # Seller sees transactions where they are seller
+        query = query.where(Transaction.buyer_id == user_id)
     elif role == "seller":
-        txs = session.exec(select(Transaction).where(Transaction.seller_id == user_id)).all()
-    # Bank/Auditor/Admin see all (or restrict later)
-    else:
-        txs = session.exec(select(Transaction)).all()
+        query = query.where(Transaction.seller_id == user_id)
+    # Bank/Auditor/Admin see all
+
+    rows = session.exec(query).all()
 
     return [
         {
             "id": tx.id,
             "buyer_id": tx.buyer_id,
             "seller_id": tx.seller_id,
+            "buyer_name": buyer_name,
+            "seller_name": seller_name,
             "currency": tx.currency,
             "amount": tx.amount,
             "status": tx.status,
             "created_at": tx.created_at,
         }
-        for tx in txs
+        for tx, buyer_name, seller_name in rows
     ]
 
 
@@ -1036,6 +1073,8 @@ def list_transactions(
 
 
 
+from sqlalchemy.orm import aliased
+
 @app.get("/transaction")
 def get_transaction_detail(
     id: int,
@@ -1049,10 +1088,14 @@ def get_transaction_detail(
     role = current_user["role"]
     user_id = current_user["user_id"]
 
+    # Access control
     if role == "buyer" and tx.buyer_id != user_id:
         raise HTTPException(status_code=403, detail="Access denied")
     if role == "seller" and tx.seller_id != user_id:
         raise HTTPException(status_code=403, detail="Access denied")
+
+    buyer = session.get(User, tx.buyer_id)
+    seller = session.get(User, tx.seller_id)
 
     ledgers = session.exec(
         select(LedgerEntry)
@@ -1063,11 +1106,27 @@ def get_transaction_detail(
     doc_ids = list({l.document_id for l in ledgers})
     documents = [session.get(Document, doc_id) for doc_id in doc_ids]
 
+    ledger_response = []
+    for l in ledgers:
+        actor = session.get(User, l.actor_id)
+        ledger_response.append({
+            "document_id": l.document_id,
+            "action": l.action,
+            "actor_id": l.actor_id,
+            "actor_name": actor.name,
+            "actor_role": actor.role,
+            "actor_org": actor.org_name,
+            "created_at": l.created_at,
+            "extra_data": l.extra_data,
+        })
+
     return {
         "transaction": {
             "id": tx.id,
             "buyer_id": tx.buyer_id,
             "seller_id": tx.seller_id,
+            "buyer_name": buyer.name,
+            "seller_name": seller.name,
             "currency": tx.currency,
             "amount": tx.amount,
             "status": tx.status,
@@ -1082,18 +1141,9 @@ def get_transaction_detail(
             }
             for d in documents if d
         ],
-        "ledger": [
-            {
-                "document_id": l.document_id,
-                "action": l.action,
-                "actor_id": l.actor_id,
-                "actor_role": session.get(User, l.actor_id).role,
-                "created_at": l.created_at,
-                "extra_data": l.extra_data,
-            }
-            for l in ledgers
-        ],
+        "ledger": ledger_response,
     }
+
 
 
 
@@ -1104,7 +1154,7 @@ def list_compromised_documents(
     session: Session = Depends(get_session),
 ):
     # Only admin or auditor can see all compromised docs
-    if current_user["role"] not in ["admin", "auditor"]:
+    if current_user["role"] not in ["admin", "auditor","bank"]:
         raise HTTPException(status_code=403, detail="Forbidden")
 
     docs = session.exec(select(Document).where(Document.is_compromised == True)).all()
@@ -1169,23 +1219,18 @@ def get_user_risk_score(
     current_user: dict = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    # Only admin/auditor can view any user's risk
-    if current_user["role"] not in ["admin", "auditor"] and current_user["user_id"] != user_id:
+    if current_user["role"] not in ["bank", "auditor"] and current_user["user_id"] != user_id:
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    # Count completed transactions
     completed_count = session.exec(
-        select(func.count())
-        .where(
+        select(func.count()).where(
             ((Transaction.buyer_id == user_id) | (Transaction.seller_id == user_id)) &
             (Transaction.status == "completed")
         )
     ).one()
 
-    # Count disputed transactions
     disputed_count = session.exec(
-        select(func.count())
-        .where(
+        select(func.count()).where(
             ((Transaction.buyer_id == user_id) | (Transaction.seller_id == user_id)) &
             (Transaction.status == "disputed")
         )
@@ -1202,27 +1247,51 @@ def get_user_risk_score(
     }
 
 
+def _org_guard(current_user, org_name):
+    if current_user["role"] in ["bank", "auditor"]:
+        return
+    if current_user["org"] != org_name:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    
+
+
 @app.get("/dashboard/org/totals")
 def get_org_totals(
     org_name: str,
     current_user: dict = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    if current_user["role"] not in ["admin"] and current_user["org"] != org_name:
+    # 🔐 Access control
+    if current_user["role"] not in ["admin", "bank", "auditor"] and current_user["org"] != org_name:
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    # Total bought by org
+    # 🏦 Bank / Auditor → Global totals (all orgs)
+    if current_user["role"] in ["bank", "auditor", "admin"]:
+        total_amount = session.exec(
+            select(func.coalesce(func.sum(Transaction.amount), 0))
+        ).one()
+
+        return {
+            "org": "ALL",
+            "total_bought": 0,
+            "total_sold": 0,
+            "total_amount": float(total_amount),
+        }
+
+    # 🧑‍💼 Buyer / Seller → Org-specific totals
+    Buyer = aliased(User)
+    Seller = aliased(User)
+
     total_bought = session.exec(
         select(func.coalesce(func.sum(Transaction.amount), 0))
-        .join(User, Transaction.buyer_id == User.id)
-        .where(User.org_name == org_name)
+        .join(Buyer, Transaction.buyer_id == Buyer.id)
+        .where(Buyer.org_name == org_name)
     ).one()
 
-    # Total sold by org
     total_sold = session.exec(
         select(func.coalesce(func.sum(Transaction.amount), 0))
-        .join(User, Transaction.seller_id == User.id)
-        .where(User.org_name == org_name)
+        .join(Seller, Transaction.seller_id == Seller.id)
+        .where(Seller.org_name == org_name)
     ).one()
 
     total_amount = float(total_bought) + float(total_sold)
@@ -1235,28 +1304,36 @@ def get_org_totals(
     }
 
 
+
+
 @app.get("/dashboard/org/status-breakdown")
 def get_org_status_breakdown(
     org_name: str,
     current_user: dict = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    if current_user["role"] not in ["admin"] and current_user["org"] != org_name:
-        raise HTTPException(status_code=403, detail="Forbidden")
+    Buyer = aliased(User)
+    Seller = aliased(User)
 
-    rows = session.exec(
-        select(Transaction.status, func.count())
-        .join(User, Transaction.buyer_id == User.id)
-        .where(User.org_name == org_name)
-        .group_by(Transaction.status)
-    ).all()
+    # Bank & Auditor can see global breakdown
+    if current_user["role"] in ["bank", "auditor", "admin"]:
+        rows = session.exec(
+            select(Transaction.status, func.count())
+            .group_by(Transaction.status)
+        ).all()
+    else:
+        rows = session.exec(
+            select(Transaction.status, func.count())
+            .join(Buyer, Transaction.buyer_id == Buyer.id)
+            .join(Seller, Transaction.seller_id == Seller.id)
+            .where((Buyer.org_name == org_name) | (Seller.org_name == org_name))
+            .group_by(Transaction.status)
+        ).all()
 
     breakdown = {status: count for status, count in rows}
 
-    return {
-        "org": org_name,
-        "breakdown": breakdown
-    }
+    return {"org": org_name, "breakdown": breakdown}
+
 
 
 @app.get("/dashboard/top-risky-users")
@@ -1264,7 +1341,7 @@ def top_risky_users(
     current_user: dict = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    if current_user["role"] not in ["admin", "auditor"]:
+    if current_user["role"] not in ["admin", "auditor", "bank"]:
         raise HTTPException(status_code=403, detail="Forbidden")
 
     users = session.exec(select(User)).all()
@@ -1309,7 +1386,7 @@ def top_volume_users(
     current_user: dict = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    if current_user["role"] not in ["admin", "auditor"]:
+    if current_user["role"] not in ["admin", "auditor", "bank"]:
         raise HTTPException(status_code=403, detail="Forbidden")
 
     users = session.exec(select(User)).all()
@@ -1341,7 +1418,7 @@ def corrupted_docs(
     current_user: dict = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    if current_user["role"] not in ["admin", "auditor"]:
+    if current_user["role"] not in ["admin", "auditor", "bank"]:
         raise HTTPException(status_code=403, detail="Forbidden")
 
     logs = session.exec(
@@ -1366,6 +1443,9 @@ def export_org_dashboard_csv(
     current_user: dict = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
+    
+    _org_guard(current_user, org_name)
+
     if current_user["role"] not in ["admin"] and current_user["org"] != org_name:
         raise HTTPException(status_code=403, detail="Forbidden")
 
@@ -1396,3 +1476,99 @@ def export_org_dashboard_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={org_name}_dashboard.csv"},
     )
+
+
+
+from sqlalchemy import func, cast, Date
+
+@app.get("/dashboard/trend")
+def transaction_trend(
+    current_user: dict = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    rows = session.exec(
+        select(
+            func.date(Transaction.created_at).label("day"),
+            func.count().filter(Transaction.status == "completed").label("completed"),
+            func.count().filter(Transaction.status == "disputed").label("disputed"),
+        )
+        .group_by(func.date(Transaction.created_at))
+        .order_by(func.date(Transaction.created_at))
+    ).all()
+
+    return [
+        {
+            "day": str(day),
+            "completed": completed or 0,
+            "disputed": disputed or 0,
+        }
+        for day, completed, disputed in rows
+    ]
+
+
+
+
+import requests
+
+@app.get("/external/trade-snapshot")
+def trade_snapshot():
+    country = "IND"
+
+    imp_url = f"https://api.worldbank.org/v2/country/{country}/indicator/NE.IMP.GNFS.CD?format=json&per_page=5"
+    exp_url = f"https://api.worldbank.org/v2/country/{country}/indicator/NE.EXP.GNFS.CD?format=json&per_page=5"
+
+    imp_res = requests.get(imp_url).json()[1]
+    exp_res = requests.get(exp_url).json()[1]
+
+    latest_import = next(x for x in imp_res if x["value"] is not None)
+    latest_export = next(x for x in exp_res if x["value"] is not None)
+
+    return {
+        "source": "World Bank",
+        "country": "India",
+        "year": int(latest_import["date"]),
+        "imports_usd_billion": round(latest_import["value"] / 1_000_000_000, 2),
+        "exports_usd_billion": round(latest_export["value"] / 1_000_000_000, 2),
+        "note": "Latest available official data (World Bank lags by 1–2 years)"
+    }
+
+
+@app.get("/ledger/all")
+def all_ledger(current_user: dict = Depends(get_current_user), session: Session = Depends(get_session)):
+    if current_user["role"] not in ["auditor", "admin"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    rows = session.exec(select(LedgerEntry).order_by(LedgerEntry.created_at.desc())).all()
+
+    return [
+        {
+            "actor_id": l.actor_id,
+            "action": l.action,
+            "document_id": l.document_id,
+            "created_at": l.created_at,
+            "extra_data": l.extra_data
+        }
+        for l in rows
+    ]
+
+
+@app.get("/verify-hash")
+def verify_hash(document_id: int, current_user: dict = Depends(get_current_user), session: Session = Depends(get_session)):
+    doc = session.get(Document, document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    current_hash = compute_file_hash(doc.file_url)
+    is_valid = current_hash == doc.file_hash
+
+    if not is_valid:
+        doc.is_compromised = True
+        session.add(doc)
+        session.commit()
+
+    return {
+        "is_valid": is_valid,
+        "stored_hash": doc.file_hash,
+        "current_hash": current_hash,
+        "checked_at": datetime.utcnow()
+    }

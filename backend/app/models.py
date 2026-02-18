@@ -10,6 +10,7 @@ class User(SQLModel, table=True):
     password: str
     role: str
     org_name: str
+    photo_url: str | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 

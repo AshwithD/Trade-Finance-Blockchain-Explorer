@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import api from "../services/api";
+import {
+  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid
+} from "recharts";
 
 export default function Dashboard() {
   const [totals, setTotals] = useState(null);
@@ -8,46 +11,35 @@ export default function Dashboard() {
   const [topRisky, setTopRisky] = useState([]);
   const [topVolume, setTopVolume] = useState([]);
   const [corruptedDocs, setCorruptedDocs] = useState([]);
+  const [trendData, setTrendData] = useState([]);
+  const [externalStats, setExternalStats] = useState(null);
+
+
+  const role = localStorage.getItem("role");
+  const org = localStorage.getItem("org");
+  const userId = localStorage.getItem("user_id");
+  const name = localStorage.getItem("name") || "User";
 
   useEffect(() => {
-    const token = localStorage.getItem("accessToken");
-    const org = localStorage.getItem("org");
-    const userId = localStorage.getItem("user_id");
+  api.get(`/dashboard/org/totals?org_name=${org}`).then(res => setTotals(res.data));
+  api.get(`/dashboard/org/status-breakdown?org_name=${org}`).then(res => setBreakdown(res.data.breakdown));
+  api.get(`/dashboard/risk-score?user_id=${userId}`).then(res => setRisk(res.data));
 
-    api.get(`/dashboard/org/totals?org_name=${org}`, {
-      headers: { Authorization: `Bearer ${token}` }
-    }).then(res => setTotals(res.data));
+  if (role === "bank" || role === "auditor") {
+    api.get("/dashboard/top-risky-users").then(res => setTopRisky(res.data));
+    api.get("/dashboard/top-volume-users").then(res => setTopVolume(res.data));
+    api.get("/alerts/compromised-documents").then(res => setCorruptedDocs(res.data));
+  }
 
-    api.get(`/dashboard/org/status-breakdown?org_name=${org}`, {
-      headers: { Authorization: `Bearer ${token}` }
-    }).then(res => setBreakdown(res.data.breakdown));
+  api.get("/dashboard/trend").then(res => setTrendData(res.data));
 
-    api.get(`/dashboard/risk-score?user_id=${userId}`, {
-      headers: { Authorization: `Bearer ${token}` }
-    }).then(res => setRisk(res.data));
+  api.get("/external/trade-snapshot").then(res => setExternalStats(res.data));
 
-    api.get("/dashboard/top-risky-users", {
-      headers: { Authorization: `Bearer ${token}` }
-    }).then(res => setTopRisky(res.data));
+}, [role, org, userId]);
 
-    api.get("/dashboard/top-volume-users", {
-      headers: { Authorization: `Bearer ${token}` }
-    }).then(res => setTopVolume(res.data));
-
-    api.get("/dashboard/corrupted-docs", {
-      headers: { Authorization: `Bearer ${token}` }
-    }).then(res => setCorruptedDocs(res.data));
-  }, []);
 
   const exportCsv = async () => {
-    const token = localStorage.getItem("accessToken");
-    const org = localStorage.getItem("org");
-
-    const res = await api.get(`/dashboard/org/export?org_name=${org}`, {
-      headers: { Authorization: `Bearer ${token}` },
-      responseType: "blob"
-    });
-
+    const res = await api.get(`/dashboard/org/export?org_name=${org}`, { responseType: "blob" });
     const url = window.URL.createObjectURL(new Blob([res.data]));
     const link = document.createElement("a");
     link.href = url;
@@ -56,134 +48,192 @@ export default function Dashboard() {
     link.click();
   };
 
-  const riskColor =
-    risk?.risk_percent >= 50
-      ? "text-red-600"
-      : risk?.risk_percent >= 20
-      ? "text-orange-500"
-      : "text-green-600";
-
   return (
-    <div className="p-8 space-y-8 bg-gray-50 min-h-screen">
-      <div className="flex items-center justify-between">
-        <h2 className="text-3xl font-bold">📊 Governance Dashboard</h2>
-        <button
-          onClick={exportCsv}
-          className="px-4 py-2 bg-green-600 text-white rounded-lg shadow hover:bg-green-700 transition"
-        >
-          Export CSV
-        </button>
+    <div className="min-h-screen bg-slate-50 p-8 space-y-8">
+
+      {/* Hero */}
+      <div className="bg-gradient-to-r from-blue-800 to-indigo-900 text-white rounded-2xl p-8 shadow">
+        <h1 className="text-3xl font-bold">Welcome to TradeSecure, {name} 👋</h1>
+        <p className="text-blue-100 mt-1">
+          Your secure platform for transaction integrity and analytics
+        </p>
       </div>
 
-      {/* KPI Cards */}
+      {/* KPIs */}
       {totals && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="bg-white p-5 rounded-xl shadow">
-            <p className="text-gray-500">Total Bought</p>
-            <p className="text-2xl font-semibold">₹ {totals.total_bought}</p>
-          </div>
-          <div className="bg-white p-5 rounded-xl shadow">
-            <p className="text-gray-500">Total Sold</p>
-            <p className="text-2xl font-semibold">₹ {totals.total_sold}</p>
-          </div>
-          <div className="bg-white p-5 rounded-xl shadow border-l-4 border-blue-600">
-            <p className="text-gray-500">Total Transaction Amount</p>
-            <p className="text-2xl font-bold">₹ {totals.total_amount}</p>
-          </div>
+          <KPI title="Total Bought" value={`₹ ${totals.total_bought}`} color="from-blue-500 to-blue-700" />
+          <KPI title="Total Sold" value={`₹ ${totals.total_sold}`} color="from-green-500 to-green-700" />
+          <KPI title="Total Amount" value={`₹ ${totals.total_amount}`} color="from-indigo-500 to-indigo-700" />
         </div>
       )}
 
-      {/* Status Breakdown */}
-      {breakdown && (
-        <div className="bg-white p-6 rounded-xl shadow">
-          <h3 className="text-xl font-semibold mb-3">📌 Transaction Status Breakdown</h3>
-          <div className="flex flex-wrap gap-3">
-            {Object.entries(breakdown).map(([status, count]) => (
-              <span
-                key={status}
-                className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm"
-              >
-                {status}: {count}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* Main Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-      {/* Risk Score */}
-      {risk && (
-        <div className="bg-white p-6 rounded-xl shadow">
-          <h3 className="text-xl font-semibold mb-2">⚠️ Your Risk Score</h3>
-          <p>Completed: {risk.completed}</p>
-          <p>Disputed: {risk.disputed}</p>
-          <p className={`text-lg font-bold ${riskColor}`}>
-            Risk: {risk.risk_percent}%
-          </p>
-        </div>
-      )}
+        {/* Left Column */}
+        <div className="lg:col-span-2 space-y-6">
+          {breakdown && (
+            <Card title="📌 Transaction Status">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {Object.entries(breakdown).map(([status, count]) => (
+                  <div key={status} className="bg-slate-100 rounded-xl p-4 text-center">
+                    <p className="text-sm text-gray-500 capitalize">{status}</p>
+                    <p className="text-2xl font-bold">{count}</p>
+                  </div>
+                ))}
+              </div>
 
-      {/* Leaderboards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="bg-white p-6 rounded-xl shadow">
-          <h3 className="text-xl font-semibold mb-3">🔴 Top 3 Risky Users</h3>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-gray-500">
-                <th>User</th>
-                <th>Org</th>
-                <th>Risk %</th>
-              </tr>
-            </thead>
-            <tbody>
-              {topRisky.map(u => (
-                <tr key={u.user_id} className="border-t">
-                  <td>{u.name}</td>
-                  <td>{u.org}</td>
-                  <td className="text-red-600 font-semibold">{u.risk_percent}%</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+              {/* ✅ REAL GRAPH (Recharts) */}
+              <div className="mt-6 h-56 bg-white rounded-xl p-3">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={trendData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="day" />
+                    <YAxis />
+                    <Tooltip />
+                    <Line type="monotone" dataKey="completed" stroke="#22c55e" strokeWidth={2} />
+                    <Line type="monotone" dataKey="disputed" stroke="#ef4444" strokeWidth={2} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </Card>
+          )}
+
+          {(role === "bank" || role === "auditor") && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <Leaderboard title="🔴 Top 3 Risky Users" rows={topRisky} type="risk" />
+              <Leaderboard title="🟢 Top 3 High Volume Users" rows={topVolume} type="volume" />
+            </div>
+          )}
         </div>
 
-        <div className="bg-white p-6 rounded-xl shadow">
-          <h3 className="text-xl font-semibold mb-3">🟢 Top 3 High Volume Users</h3>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-gray-500">
-                <th>User</th>
-                <th>Org</th>
-                <th>Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {topVolume.map(u => (
-                <tr key={u.user_id} className="border-t">
-                  <td>{u.name}</td>
-                  <td>{u.org}</td>
-                  <td className="font-semibold">₹ {u.total_amount}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        {/* Right Column */}
+        <div className="space-y-6">
+
+          {/* Risk Pie */}
+          {risk && (
+            <Card title="⚠️ User Risk Score">
+              <RiskRing percent={risk.risk_percent} />
+              <div className="mt-3 text-center text-sm text-gray-600">
+                Completed: {risk.completed} | Disputed: {risk.disputed}
+              </div>
+            </Card>
+          )}
+
+          <Card title="🚨 Corrupted Documents">
+            {corruptedDocs.length === 0 ? (
+              <p className="text-gray-500">No corrupted documents 🎉</p>
+            ) : (
+              corruptedDocs.map((d, i) => (
+                <div key={i} className="p-3 bg-red-50 border-l-4 border-red-600 rounded mb-2">
+                  <p className="font-medium text-red-700">
+                    🚨 Doc #{d.id} ({d.doc_type})
+                  </p>
+                  <p className="text-xs text-gray-600">
+                    Owner: {d.owner_id} · Status: {d.status}
+                  </p>
+                </div>
+
+              ))
+            )}
+          </Card>
+
+          {externalStats && (
+            <Card title="🌍 Global Trade Snapshot (UNCTAD)">
+              <div className="space-y-2 text-sm text-gray-700">
+                <p>
+                  <span className="font-medium">Country:</span> {externalStats.country} ({externalStats.year})
+                </p>
+                <p>
+                  <span className="font-medium">Imports:</span> ${externalStats.imports_usd_billion}B
+                </p>
+                <p>
+                  <span className="font-medium">Exports:</span> ${externalStats.exports_usd_billion}B
+                </p>
+                <p className="text-xs text-gray-400 mt-2">
+                  Source: {externalStats.source} · {externalStats.note}
+                </p>
+              </div>
+            </Card>
+          
+        
+)}
+
+
+          <button
+            onClick={exportCsv}
+            className="w-full py-3 bg-blue-600 text-white rounded-xl shadow hover:bg-blue-700"
+          >
+            Export Dashboard CSV
+          </button>
         </div>
       </div>
+    </div>
+  );
+}
 
-      {/* Corrupted Documents */}
-      <div className="bg-white p-6 rounded-xl shadow">
-        <h3 className="text-xl font-semibold mb-3">🚨 Corrupted Documents</h3>
-        {corruptedDocs.length === 0 ? (
-          <p className="text-gray-500">No corrupted documents detected 🎉</p>
-        ) : (
-          <ul className="space-y-2">
-            {corruptedDocs.map((d, i) => (
-              <li key={i} className="p-3 bg-red-50 border-l-4 border-red-600 rounded">
-                Doc ID: {d.doc_id} —{" "}
-                {new Date(d.timestamp).toLocaleString()}
-              </li>
-            ))}
-          </ul>
-        )}
+/* ---------- UI Components ---------- */
+
+function KPI({ title, value, color }) {
+  return (
+    <div className={`bg-gradient-to-r ${color} text-white p-6 rounded-2xl shadow`}>
+      <p className="text-sm opacity-90">{title}</p>
+      <p className="text-3xl font-bold">{value}</p>
+    </div>
+  );
+}
+
+function Card({ title, children }) {
+  return (
+    <div className="bg-white p-6 rounded-2xl shadow">
+      <h3 className="text-lg font-semibold mb-4">{title}</h3>
+      {children}
+    </div>
+  );
+}
+
+function Leaderboard({ title, rows, type }) {
+  return (
+    <Card title={title}>
+      <div className="space-y-3">
+        {rows.map((u) => (
+          <div
+            key={u.user_id}
+            className="flex items-center justify-between bg-slate-50 p-3 rounded-lg hover:shadow transition"
+          >
+            <div className="flex items-center gap-3">
+              <img
+                src={u.avatar_url || `https://api.dicebear.com/7.x/initials/svg?seed=${u.name}`}
+                alt="avatar"
+                className="w-10 h-10 rounded-full object-cover border"
+              />
+              <div>
+                <p className="font-medium">{u.name}</p>
+                <p className="text-xs text-gray-500">{u.org}</p>
+              </div>
+            </div>
+            <p className={`font-semibold ${type === "risk" ? "text-red-600" : "text-green-600"}`}>
+              {type === "risk" ? `${u.risk_percent}%` : `₹ ${u.total_amount}`}
+            </p>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function RiskRing({ percent }) {
+  return (
+    <div className="relative w-32 h-32 mx-auto">
+      <div
+        className="absolute inset-0 rounded-full"
+        style={{
+          background: `conic-gradient(#22c55e ${100 - percent}%, #ef4444 0 ${percent}%, #e5e7eb 0)`
+        }}
+      />
+      <div className="absolute inset-3 bg-white rounded-full flex items-center justify-center">
+        <span className="text-2xl font-bold">{percent}%</span>
       </div>
     </div>
   );

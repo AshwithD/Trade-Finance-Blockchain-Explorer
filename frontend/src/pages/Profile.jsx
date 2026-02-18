@@ -10,9 +10,7 @@ export default function Profile() {
     const userId = localStorage.getItem("user_id");
 
     api.get("/user", {
-      headers: {
-        Authorization: `Bearer ${token}`
-      }
+      headers: { Authorization: `Bearer ${token}` }
     })
       .then(res => setUser(res.data))
       .catch(() => alert("Unauthorized"));
@@ -24,111 +22,91 @@ export default function Profile() {
 
   if (!user) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <div className="text-gray-600 animate-pulse">Loading profile...</div>
       </div>
     );
   }
 
-  const logout = () => {
-    localStorage.removeItem("accessToken");
-    localStorage.removeItem("role");
-    localStorage.removeItem("user_id");
-    localStorage.removeItem("org");
-    window.location.href = "/";
-  };
+  const photoUrl = user.photo_url
+    ? `${process.env.REACT_APP_API_URL || "http://localhost:8000"}/${user.photo_url}`
+    : null;
 
-  const canUpload = user.role === "buyer" || user.role === "seller";
+  const riskTone =
+    risk?.risk_percent >= 50
+      ? "from-red-500 to-red-600"
+      : risk?.risk_percent >= 20
+      ? "from-orange-400 to-orange-500"
+      : "from-emerald-400 to-emerald-500";
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200 px-4">
-      <div className="bg-white p-8 rounded-2xl shadow-lg w-full max-w-lg">
+    <div className="min-h-screen bg-gradient-to-br from-slate-100 to-slate-200 px-4 py-12 flex justify-center">
+      <div className="w-full max-w-3xl space-y-8">
 
-        <h2 className="text-3xl font-bold mb-2 text-center text-gray-800">
-          👤 Profile
-        </h2>
-        <p className="text-center text-sm text-gray-500 mb-6">
-          Your account details & activity overview
-        </p>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-          <div className="p-3 rounded bg-gray-50">
-            <p className="text-xs text-gray-500">Name</p>
-            <p className="font-medium">{user.name}</p>
-          </div>
-
-          <div className="p-3 rounded bg-gray-50">
-            <p className="text-xs text-gray-500">Email</p>
-            <p className="font-medium break-all">{user.email}</p>
-          </div>
-
-          <div className="p-3 rounded bg-gray-50">
-            <p className="text-xs text-gray-500">Organization</p>
-            <p className="font-medium">{user.org}</p>
-          </div>
-
-          <div className="p-3 rounded bg-gray-50">
-            <p className="text-xs text-gray-500">Role</p>
-            <p className="font-medium text-blue-600 capitalize">{user.role}</p>
-          </div>
-        </div>
-
-        {risk && (
-          <div
-            className={`mb-6 p-4 rounded-lg border-l-4 ${
-              risk.risk_percent > 30
-                ? "border-red-500 bg-red-50"
-                : risk.risk_percent > 10
-                ? "border-yellow-500 bg-yellow-50"
-                : "border-green-500 bg-green-50"
-            }`}
-          >
-            <h3 className="font-semibold mb-2">📊 Risk Score</h3>
-            <div className="flex justify-between text-sm">
-              <span>Completed: {risk.completed}</span>
-              <span>Disputed: {risk.disputed}</span>
+        {/* Header Card */}
+        <div className="bg-gradient-to-r from-slate-900 to-slate-800 rounded-2xl p-6 shadow-xl flex items-center gap-5">
+          {photoUrl ? (
+            <img
+              src={photoUrl}
+              alt="Profile"
+              className="h-20 w-20 rounded-full object-cover border-4 border-white shadow"
+              onError={(e) => { e.currentTarget.src = "/avatar.png"; }}
+            />
+          ) : (
+            <div className="h-20 w-20 rounded-full bg-blue-600 text-white flex items-center justify-center text-3xl font-bold shadow">
+              {user.name?.[0]?.toUpperCase()}
             </div>
-            <p className="mt-2 font-medium">
-              Risk: <span className="text-lg font-bold">{risk.risk_percent}%</span>
-            </p>
-          </div>
-        )}
-
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          <a href="/documents">
-            <button className="w-full px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition">
-              📄 Documents
-            </button>
-          </a>
-
-          {canUpload && (
-            <a href="/upload">
-              <button className="w-full px-3 py-2 bg-gray-800 text-white rounded hover:bg-gray-900 transition">
-                ⬆️ Upload
-              </button>
-            </a>
           )}
 
-          <a href="/transactions">
-            <button className="w-full px-3 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition">
-              🔁 Transactions
-            </button>
-          </a>
-
-          <a href="/dashboard" className="col-span-2 sm:col-span-1">
-            <button className="w-full px-3 py-2 bg-emerald-600 text-white rounded hover:bg-emerald-700 transition">
-              📊 Dashboard
-            </button>
-          </a>
-
-          <button
-            onClick={logout}
-            className="col-span-2 sm:col-span-3 px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition"
-          >
-            🚪 Logout
-          </button>
+          <div>
+            <h2 className="text-2xl font-bold text-white">{user.name}</h2>
+            <p className="text-sm text-slate-300">{user.email}</p>
+          </div>
         </div>
+
+        {/* Info Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <InfoCard title="Role" value={user.role} color="blue" />
+          <InfoCard title="Organization" value={user.org} color="indigo" />
+          <InfoCard title="Status" value="Active" color="emerald" />
+        </div>
+
+
       </div>
     </div>
+  );
+}
+
+function InfoCard({ title, value, color }) {
+  const map = {
+    blue: "border-blue-500 text-blue-600",
+    indigo: "border-indigo-500 text-indigo-600",
+    emerald: "border-emerald-500 text-emerald-600",
+  };
+
+  return (
+    <div className={`bg-white p-5 rounded-xl shadow border-l-4 ${map[color]}`}>
+      <p className="text-sm text-gray-500">{title}</p>
+      <p className="text-lg font-semibold capitalize">{value}</p>
+    </div>
+  );
+}
+
+function ActionButton({ label, color, href }) {
+  const map = {
+    blue: "bg-blue-600 hover:bg-blue-700",
+    indigo: "bg-indigo-600 hover:bg-indigo-700",
+    emerald: "bg-emerald-600 hover:bg-emerald-700",
+    slate: "bg-slate-800 hover:bg-slate-900",
+  };
+
+  return (
+    <a href={href}>
+      <button
+        className={`w-full py-2 rounded-lg text-white font-medium transition shadow ${map[color]}`}
+      >
+        {label}
+      </button>
+    </a>
   );
 }
