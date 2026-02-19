@@ -179,7 +179,7 @@ function Login() {
 
         {/* ✅ Footer brand updated */}
         <p className="text-xs text-center text-gray-400 mt-6">
-          © TradeSecure · Trade Finance Blockchain Explorer
+          © TradeSecure
         </p>
       </div>
     </div>
