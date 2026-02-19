@@ -1,5 +1,6 @@
 import { useState } from "react";
 import api from "../services/api";
+import logo from "../assets/tradesecure-logo.png";   // ✅ ADD THIS
 
 function Login() {
   const [email, setEmail] = useState("");
@@ -10,7 +11,6 @@ function Login() {
   const [name, setName] = useState("");
   const [org, setOrg] = useState("");
   const [role, setRole] = useState("buyer");
-  //const [photoUrl, setPhotoUrl] = useState(""); // ✅ NEW
   const [photo, setPhoto] = useState(null);
 
   const inputClass =
@@ -43,13 +43,13 @@ function Login() {
 
   const register = async () => {
     try {
-      const formData = new FormData();   // ✅ create FormData
+      const formData = new FormData();
       formData.append("name", name);
       formData.append("email", email);
       formData.append("password", password);
       formData.append("role", role);
       formData.append("org_name", org);
-      if (photo) formData.append("photo", photo); // ✅ attach file
+      if (photo) formData.append("photo", photo);
 
       await api.post("/create-user", formData, {
         headers: { "Content-Type": "multipart/form-data" }
@@ -66,9 +66,16 @@ function Login() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-gray-100">
       <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md animate-fade-in">
-        <h2 className="text-3xl font-bold text-center text-gray-800 mb-1">
-          Trade Finance Explorer
-        </h2>
+
+        {/* ✅ Logo */}
+        <div className="flex justify-center mb-3">
+          <img
+            src={logo}
+            alt="TradeSecure Logo"
+            className="h-14 object-contain"
+          />
+        </div>
+
         <p className="text-center text-gray-500 mb-6">
           {isRegister ? "Create your account" : "Sign in to continue"}
         </p>
@@ -115,7 +122,6 @@ function Login() {
               </select>
             </div>
 
-            {/* ✅ NEW: Profile Photo URL */}
             <div className="mb-4">
               <label className="text-sm text-gray-600">Profile Photo (optional)</label>
               <input
@@ -124,7 +130,7 @@ function Login() {
                 className="w-full text-sm"
                 onChange={(e) => setPhoto(e.target.files[0])}
               />
-              </div>
+            </div>
           </>
         )}
 
@@ -171,8 +177,9 @@ function Login() {
           </button>
         </div>
 
+        {/* ✅ Footer brand updated */}
         <p className="text-xs text-center text-gray-400 mt-6">
-          © Trade Finance Blockchain Explorer
+          © TradeSecure · Trade Finance Blockchain Explorer
         </p>
       </div>
     </div>
