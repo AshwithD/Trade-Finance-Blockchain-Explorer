@@ -38,16 +38,21 @@ def create_refresh_token(data: dict, days: int = 7):
 
 
 
+from passlib.context import CryptContext
 import hashlib
 
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
 def _normalize_password(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(_normalize_password(password))
+    normalized = _normalize_password(password)
+    return pwd_context.hash(normalized)
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(_normalize_password(plain_password), hashed_password)
+    normalized = _normalize_password(plain_password)
+    return pwd_context.verify(normalized, hashed_password)
 
 
 
