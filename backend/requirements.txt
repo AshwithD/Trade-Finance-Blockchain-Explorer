@@ -10,6 +10,8 @@ passlib[bcrypt]==1.7.4
 python-multipart==0.0.9
 python-dotenv==1.0.1
 PyJWT==2.10.1
+bcrypt==3.2.2
+
 
 # Supabase
 supabase==2.5.0
