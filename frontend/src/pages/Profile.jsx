@@ -32,12 +32,12 @@ export default function Profile() {
     ? `${process.env.REACT_APP_API_URL || "http://localhost:8000"}/${user.photo_url}`
     : null;
 
-  const riskTone =
-    risk?.risk_percent >= 50
-      ? "from-red-500 to-red-600"
-      : risk?.risk_percent >= 20
-      ? "from-orange-400 to-orange-500"
-      : "from-emerald-400 to-emerald-500";
+  // const riskTone =
+  //   risk?.risk_percent >= 50
+  //     ? "from-red-500 to-red-600"
+  //     : risk?.risk_percent >= 20
+  //     ? "from-orange-400 to-orange-500"
+  //     : "from-emerald-400 to-emerald-500";
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-100 to-slate-200 px-4 py-12 flex justify-center">
@@ -92,13 +92,13 @@ function InfoCard({ title, value, color }) {
   );
 }
 
-function ActionButton({ label, color, href }) {
-  const map = {
-    blue: "bg-blue-600 hover:bg-blue-700",
-    indigo: "bg-indigo-600 hover:bg-indigo-700",
-    emerald: "bg-emerald-600 hover:bg-emerald-700",
-    slate: "bg-slate-800 hover:bg-slate-900",
-  };
+// function ActionButton({ label, color, href }) {
+//   const map = {
+//     blue: "bg-blue-600 hover:bg-blue-700",
+//     indigo: "bg-indigo-600 hover:bg-indigo-700",
+//     emerald: "bg-emerald-600 hover:bg-emerald-700",
+//     slate: "bg-slate-800 hover:bg-slate-900",
+//   };
 
   return (
     <a href={href}>
