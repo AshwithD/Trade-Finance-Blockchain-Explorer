@@ -38,12 +38,17 @@ def create_refresh_token(data: dict, days: int = 7):
 
 
 
-def hash_password(password: str):
-    return pwd_context.hash(password[:72])
+import hashlib
 
+def _normalize_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
 
-def verify_password(plain_password: str, hashed_password: str):
-    return pwd_context.verify(plain_password, hashed_password)
+def hash_password(password: str) -> str:
+    return pwd_context.hash(_normalize_password(password))
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return pwd_context.verify(_normalize_password(plain_password), hashed_password)
+
 
 
 
