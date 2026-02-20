@@ -254,23 +254,23 @@ def upload_document(
             detail=f"{role} is not allowed to upload {doc_type} documents"
         )
 
+    # 1️⃣ Read file
     file_bytes = file.file.read()
     file_hash = calculate_file_hash(file_bytes)
 
+    # 2️⃣ Upload to Supabase Storage
     storage_key, public_url = upload_to_supabase(
         file_bytes,
         file.filename,
         file.content_type,
     )
 
-    document.file_url = public_url
-    document.storage_key = storage_key
-
-
+    # 3️⃣ Create document FIRST ✅
     document = Document(
         doc_type=doc_type,
         doc_number=doc_number,
-        file_url=file.filename,
+        file_url=public_url,          # ✅ use Supabase public URL
+        storage_key=storage_key,      # ✅ store key
         file_hash=file_hash,
         owner_id=current_user["user_id"],
         buyer_id=current_user["user_id"],
@@ -282,6 +282,7 @@ def upload_document(
     session.commit()
     session.refresh(document)
 
+    # 4️⃣ Ledger entry
     ledger = LedgerEntry(
         document_id=document.id,
         actor_id=current_user["user_id"],
@@ -295,7 +296,7 @@ def upload_document(
     return {
         "message": "Document uploaded successfully",
         "document_id": document.id,
-        "file_name": document.file_url,
+        "file_url": document.file_url,
         "file_hash": file_hash,
     }
 
@@ -1121,11 +1122,6 @@ def list_transactions(
 #         ],
 #     }
 
-
-
-
-
-from sqlalchemy.orm import aliased
 
 @app.get("/transaction")
 def get_transaction_detail(

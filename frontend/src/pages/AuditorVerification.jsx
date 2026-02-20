@@ -16,56 +16,99 @@ export default function AuditorVerification() {
       .catch(console.error);
   }, []);
 
+  const verifyDoc = async (id) => {
+    try {
+      await api.post("/action", null, {
+        params: { doc_id: id, action: "VERIFY" }
+      });
+      alert("Document verified");
+      window.location.reload();
+    } catch {
+      alert("Verify failed");
+    }
+  };
+
+  const getLedgerForDoc = (docId) =>
+    ledger.filter(l => l.document_id === docId);
+
   return (
-    <div className="min-h-screen bg-slate-50 p-8 grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div className="min-h-screen bg-slate-50 p-8">
+      <h2 className="text-3xl font-bold mb-6">🕵️ Auditor Verification</h2>
 
-      {/* Left: Documents to Verify */}
-      <div className="lg:col-span-1 space-y-4">
-        <h2 className="text-2xl font-bold">🕵️ Auditor Verification</h2>
-
+      {/* Documents */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
         {docs.map((d) => (
-          <Link to={`/document/${d.id}`} key={d.id}>
-            <div className="bg-white p-4 rounded-xl shadow hover:shadow-lg border-l-4 border-red-500 transition">
-              <p className="font-semibold">TYPE: {d.doc_type} (#{d.id})</p>
-              <p className="text-sm text-gray-600">Created: {new Date(d.created_at).toLocaleDateString()}</p>
-              <p className="text-sm text-gray-600">Owner: {d.owner_id}</p>
-              <p className="text-xs mt-2 break-all text-gray-500">Hash: {d.file_hash}</p>
-
-              <span className="inline-block mt-2 text-xs px-2 py-1 bg-red-100 text-red-700 rounded">
-                Integrity Failed
-              </span>
-            </div>
-          </Link>
-        ))}
-      </div>
-
-      {/* Right: Ledger Timeline */}
-      <div className="lg:col-span-2 bg-white rounded-xl shadow p-6">
-        <h3 className="text-xl font-semibold mb-4">🧾 Immutable Ledger</h3>
-
-        <div className="space-y-4 max-h-[75vh] overflow-y-auto pr-2">
-          {ledger.map((l, i) => (
-            <div
-              key={i}
-              className="relative pl-6 border-l-4 border-blue-500 bg-slate-50 p-4 rounded"
-            >
-              <span className="absolute -left-2 top-5 w-4 h-4 bg-blue-500 rounded-full" />
-
-              <div className="grid grid-cols-4 gap-2 text-sm">
-                <p className="font-medium">Actor: {l.actor_id}</p>
-                <p>Action: {l.action}</p>
-                <p>Doc: #{l.document_id}</p>
-                <p className="text-gray-500">{new Date(l.created_at).toLocaleString()}</p>
+          <div key={d.id} className="bg-white rounded-xl shadow p-6 border">
+            <div className="flex justify-between items-start">
+              <div>
+                <p className="font-semibold text-lg">
+                  TYPE: {d.doc_type} (#{d.id})
+                </p>
+                <p className="text-sm text-gray-600">Created at: {new Date(d.created_at).toLocaleDateString()}</p>
+                <p className="text-sm text-gray-600">Owner: {d.owner_id}</p>
+                <p className="text-sm text-gray-600">Number: {d.doc_number}</p>
+                <p className="text-xs break-all text-gray-500 mt-2">
+                  Hash: {d.file_hash}
+                </p>
+                <p className="text-sm text-gray-600 mt-1">
+                  Issued at: {d.issued_at ? new Date(d.issued_at).toLocaleDateString() : "—"}
+                </p>
               </div>
 
-              {l.extra_data && (
-                <pre className="mt-2 text-xs bg-black/5 p-2 rounded overflow-x-auto">
-                  {JSON.stringify(l.extra_data, null, 2)}
-                </pre>
-              )}
+              <button
+                onClick={() => verifyDoc(d.id)}
+                className="bg-blue-600 text-white px-4 py-1.5 rounded hover:bg-blue-700"
+              >
+                Verify
+              </button>
             </div>
-          ))}
-        </div>
+
+            <span className="inline-block mt-3 text-xs px-2 py-1 bg-red-100 text-red-700 rounded">
+              Integrity Failed
+            </span>
+
+            {/* Ledger table per document */}
+            <div className="mt-6">
+              <h4 className="font-semibold mb-2">Actor Action Document</h4>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm border">
+                  <thead className="bg-gray-100">
+                    <tr>
+                      <th className="p-2 border">Actor</th>
+                      <th className="p-2 border">Action</th>
+                      <th className="p-2 border">Document</th>
+                      <th className="p-2 border">Meta</th>
+                      <th className="p-2 border">Created At</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {getLedgerForDoc(d.id).map((l, i) => (
+                      <tr key={i} className="border-t">
+                        <td className="p-2 border">{l.actor_id}</td>
+                        <td className="p-2 border">{l.action}</td>
+                        <td className="p-2 border">{l.document_id}</td>
+                        <td className="p-2 border text-xs">
+                          {JSON.stringify(l.extra_data || {})}
+                        </td>
+                        <td className="p-2 border">
+                          {new Date(l.created_at).toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <Link
+              to={`/document/${d.id}`}
+              className="inline-block mt-4 text-blue-600 text-sm hover:underline"
+            >
+              Open full document →
+            </Link>
+          </div>
+        ))}
       </div>
     </div>
   );
