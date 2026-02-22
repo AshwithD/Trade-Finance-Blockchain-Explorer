@@ -239,13 +239,15 @@ def upload_document(
     role = current_user["role"]
 
     # 🔒 Role-based protection
-    if role not in ["buyer", "seller"]:
+    if role not in ["buyer", "seller", "bank"]:
         raise HTTPException(status_code=403, detail="Only buyer or seller can upload documents")
 
     # 🔒 Role → Allowed document types
     role_doc_map = {
         "buyer": ["PO"],
         "seller": ["BOL", "INVOICE"],
+        "bank": ["LOC"],
+
     }
 
     if doc_type not in role_doc_map[role]:
@@ -511,7 +513,6 @@ def perform_action(
         "RECEIVE": "buyer",
         "ISSUE_LOC": "bank",
         "PAY": "bank",
-        "VERIFY": "auditor",
     }
 
     if action in role_action_map and role != role_action_map[action]:
@@ -521,11 +522,11 @@ def perform_action(
     session.add(document)
 
     ledger = LedgerEntry(
-        document_id=document.id,
-        actor_id=current_user["user_id"],
-        action=action,
-        extra_data={},
-    )
+    document_id=document.id,
+    actor_id=current_user["user_id"],
+    action=action,
+    extra_data={"transaction_id": document.transaction_id} if hasattr(document, "transaction_id") else {},
+)
 
     session.add(ledger)
     session.commit()
@@ -571,58 +572,65 @@ def verify_document_hash(
 
 # week-5
 @app.post("/po/create")
-def create_po_with_transaction(seller_id: int,
-                               currency: str,
-                               amount: float,
-                               file: UploadFile = File(...),
-                               current_user: dict =Depends(get_current_user),
-                               session: Session = Depends(get_session),
-                               ):
-    # only buyer can create Po
+def create_po_with_transaction(
+    seller_id: int,
+    currency: str,
+    amount: float,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
     if current_user["role"] != "buyer":
-        raise HTTPException(status_code=403,detail="Only Buyers can create PO")
-    
+        raise HTTPException(status_code=403, detail="Only Buyers can create PO")
+
+    # 1️⃣ Read file + hash
     file_bytes = file.file.read()
     file_hash = calculate_file_hash(file_bytes)
 
+    # 2️⃣ Upload to Supabase
     storage_key, public_url = upload_to_supabase(
         file_bytes,
         file.filename,
         file.content_type,
     )
 
-    document.file_url = public_url
-    document.storage_key = storage_key
-
-
-    # create transaction
-    tx = Transaction(buyer_id=current_user["user_id"],
-                     seller_id=seller_id,
-                     currency=currency,
-                     amount=amount,
-                     status="pending",)
+    # 3️⃣ Create transaction
+    tx = Transaction(
+        buyer_id=current_user["user_id"],
+        seller_id=seller_id,
+        currency=currency,
+        amount=amount,
+        status="pending",
+    )
     session.add(tx)
     session.commit()
     session.refresh(tx)
 
-    # create PO document
-    document = Document(doc_type="PO",
-                        doc_number=file.filename,
-                        file_url=file.filename,
-                        file_hash=file_hash,
-                        owner_id=current_user["user_id"],
-                        buyer_id=current_user["user_id"],
-                        seller_id=seller_id,
-                        status="ISSUED",)
+    # 4️⃣ Create PO document
+    document = Document(
+        doc_type="PO",
+        doc_number=file.filename,
+        file_url=public_url,        # ✅ Supabase URL
+        storage_key=storage_key,    # ✅ Supabase key
+        file_hash=file_hash,
+        owner_id=current_user["user_id"],
+        buyer_id=current_user["user_id"],
+        seller_id=seller_id,
+        status="ISSUED",
+    )
+
     session.add(document)
     session.commit()
     session.refresh(document)
 
-    # create ledger entry
-    ledger = LedgerEntry(document_id=document.id,
-                         actor_id=current_user["user_id"],
-                         action="ISSUED",
-                         extra_data={"transaction_id": tx.id},)
+    # 5️⃣ Ledger entry
+    ledger = LedgerEntry(
+        document_id=document.id,
+        actor_id=current_user["user_id"],
+        action="ISSUED",
+        extra_data={"transaction_id": tx.id},
+    )
+
     session.add(ledger)
     session.commit()
 
@@ -632,33 +640,34 @@ def create_po_with_transaction(seller_id: int,
         "document_id": document.id,
         "status": tx.status,
     }
-    
+
+
 
 @app.post("/loc/issue")
-def issue_loc_for_po(po_id: int,
-                     file: UploadFile = File(...),
-                     current_user: dict = Depends(get_current_user),
-                     session: Session = Depends(get_session),):
-    
-    # only bank can issue LOC
+def issue_loc_for_po(
+    po_id: int,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
     if current_user["role"] != "bank":
-        raise HTTPException(status_code=403, detail="only bank can issue LOC")
-    
+        raise HTTPException(status_code=403, detail="Only bank can issue LOC")
+
     po_doc = session.get(Document, po_id)
     if not po_doc or po_doc.doc_type != "PO":
         raise HTTPException(status_code=400, detail="Invalid PO")
-    
-    # to find transaction id from ledger entry
-    po_ledger = session.exec(select(LedgerEntry)
-                             .where(LedgerEntry.document_id == po_id)
-                             .order_by(LedgerEntry.created_at.desc())).first()
-    
+
+    po_ledger = session.exec(
+        select(LedgerEntry)
+        .where(LedgerEntry.document_id == po_id)
+        .order_by(LedgerEntry.created_at.desc())
+    ).first()
+
     if not po_ledger or "transaction_id" not in po_ledger.extra_data:
-        raise HTTPException(status_code=400, detail="PO is not linked to a transaction")
-    
+        raise HTTPException(status_code=400, detail="PO not linked to transaction")
+
     tx_id = po_ledger.extra_data["transaction_id"]
 
-    # save LOC file
     file_bytes = file.file.read()
     file_hash = calculate_file_hash(file_bytes)
 
@@ -668,30 +677,28 @@ def issue_loc_for_po(po_id: int,
         file.content_type,
     )
 
-    document.file_url = public_url
-    document.storage_key = storage_key
+    loc_doc = Document(
+        doc_type="LOC",
+        doc_number=file.filename,
+        file_url=public_url,
+        storage_key=storage_key,
+        file_hash=file_hash,
+        owner_id=current_user["user_id"],
+        buyer_id=po_doc.buyer_id,
+        seller_id=po_doc.seller_id,
+        status="ISSUED",
+    )
 
-
-    # create LOC document
-    loc_doc = Document(doc_type="LOC",
-                       doc_number=file.filename,
-                       file_url=file.filename,
-                       file_hash=file_hash,
-                       owner_id=current_user["user_id"],
-                       buyer_id=po_doc.buyer_id,
-                       seller_id=po_doc.seller_id,
-                       status="ISSUED",
-                       )
     session.add(loc_doc)
     session.commit()
     session.refresh(loc_doc)
 
-    # create ledger entry linked to transaction + PO
-    ledger = LedgerEntry(document_id=loc_doc.id,
-                         actor_id=current_user["user_id"],
-                         action="ISSUED",
-                         extra_data={"transaction_id": tx_id, "po_id": po_id},             
-                        )
+    ledger = LedgerEntry(
+        document_id=loc_doc.id,
+        actor_id=current_user["user_id"],
+        action="ISSUED",
+        extra_data={"transaction_id": tx_id, "po_id": po_id},
+    )
 
     session.add(ledger)
     session.commit()
@@ -704,69 +711,81 @@ def issue_loc_for_po(po_id: int,
     }
 
 
+
+
 @app.post("/audit/verify")
-def verify_po_and_loc(po_id: int,
-                      current_user: dict =Depends(get_current_user),
-                      session: Session = Depends(get_session),):
-    # only auditor can verify
+def verify_po_and_loc(
+    po_id: int,
+    current_user: dict = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    # Only auditor can verify
     if current_user["role"] != "auditor":
         raise HTTPException(status_code=403, detail="Only auditor can verify")
-    
+
     po_doc = session.get(Document, po_id)
     if not po_doc or po_doc.doc_type != "PO":
         raise HTTPException(status_code=400, detail="Invalid PO")
-    
-    # find transaction_id from Po ledger
-    po_ledger = session.exec(select(LedgerEntry)
-                             .where(LedgerEntry.document_id == po_id)
-                             .order_by(LedgerEntry.created_at.desc())).first()
-    
-    if not po_ledger or "transaction_id" not in po_ledger.extra_data:
-        raise HTTPException(status_code=400, detail="PO is not linked to a transaction")
-    
-    tx_id = po_ledger.extra_data["transaction_id"]
 
-    # find LOC linked to same transaction
-    loc_leder = session.exec(select(LedgerEntry)
-                             .where(LedgerEntry.extra_data["transaction_id"].as_integer() == tx_id,)).all()
-    
-    loc_ids = [l.document_id 
-               for l in loc_leder
-               if session.get(Document, l.document_id).doc_type == "LOC"]
-    
-    if not loc_ids:
+    # Get transaction_id from PO ledger
+    po_ledger = session.exec(
+        select(LedgerEntry)
+        .where(LedgerEntry.document_id == po_id)
+        .order_by(LedgerEntry.created_at.desc())
+    ).first()
+
+    if not po_ledger or not po_ledger.extra_data:
+        raise HTTPException(status_code=400, detail="PO not linked to transaction")
+
+    tx_id = po_ledger.extra_data.get("transaction_id")
+    if not tx_id:
+        raise HTTPException(status_code=400, detail="PO missing transaction_id")
+
+    # 🔥 Find LOC manually (safe way)
+    all_ledgers = session.exec(select(LedgerEntry)).all()
+
+    loc_id = None
+
+    for l in all_ledgers:
+        if l.extra_data and l.extra_data.get("transaction_id") == tx_id:
+            doc = session.get(Document, l.document_id)
+            if doc and doc.doc_type == "LOC":
+                loc_id = doc.id
+                break
+
+    if not loc_id:
         raise HTTPException(status_code=400, detail="No LOC found for this transaction")
-    
-    loc_id = loc_ids[0]
 
-    # create ledger entry for PO
-    ledger_po = LedgerEntry(document_id=po_id,
-                            actor_id=current_user["user_id"],
-                            action="VERIFIED",
-                            extra_data={"transaction_id": tx_id},
-                            )
-    
-    # create ledger entry for LOC
-    ledger_loc = LedgerEntry(document_id=loc_id,
-                            actor_id=current_user["user_id"],
-                            action="VERIFIED",
-                            extra_data={"transaction_id": tx_id},
-                            )
-    
+    # Create VERIFIED ledger for PO
+    ledger_po = LedgerEntry(
+        document_id=po_id,
+        actor_id=current_user["user_id"],
+        action="VERIFIED",
+        extra_data={"transaction_id": tx_id},
+    )
+
+    # Create VERIFIED ledger for LOC
+    ledger_loc = LedgerEntry(
+        document_id=loc_id,
+        actor_id=current_user["user_id"],
+        action="VERIFIED",
+        extra_data={"transaction_id": tx_id},
+    )
+
     session.add(ledger_po)
     session.add(ledger_loc)
 
-    # update transaction status
+    # Update transaction status
     tx = session.get(Transaction, tx_id)
     if not tx:
-        raise HTTPException(status_code=404, detail="Transaction Not Found")
-    
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
     tx.status = "in_progress"
     session.add(tx)
     session.commit()
 
     return {
-        "message": "Po and LOC verified",
+        "message": "PO and LOC verified successfully",
         "transaction_id": tx_id,
         "new_status": tx.status,
     }
@@ -774,24 +793,23 @@ def verify_po_and_loc(po_id: int,
 
 
 @app.post("/bol/upload")
-def upload_bol_for_tranaction(transaction_id: int,
-                              tracking_id: str,
-                              file: UploadFile = File(...),
-                              current_user: dict = Depends(get_current_user),
-                              session: Session = Depends(get_session),
-                              ):
-    # only seller can upload BOL
+def upload_bol_for_transaction(
+    transaction_id: int,
+    tracking_id: str,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
     if current_user["role"] != "seller":
         raise HTTPException(status_code=403, detail="Only Seller can upload BOL")
-    
+
     tx = session.get(Transaction, transaction_id)
     if not tx:
         raise HTTPException(status_code=404, detail="Transaction not found")
-    
-    # only if transaction is in_progress
+
     if tx.status != "in_progress":
         raise HTTPException(status_code=400, detail="Transaction not in progress")
-    
+
     file_bytes = file.file.read()
     file_hash = calculate_file_hash(file_bytes)
 
@@ -801,32 +819,29 @@ def upload_bol_for_tranaction(transaction_id: int,
         file.content_type,
     )
 
-    document.file_url = public_url
-    document.storage_key = storage_key
+    bol_doc = Document(
+        doc_type="BOL",
+        doc_number=file.filename,
+        file_url=public_url,
+        storage_key=storage_key,
+        file_hash=file_hash,
+        owner_id=current_user["user_id"],
+        buyer_id=tx.buyer_id,
+        seller_id=current_user["user_id"],
+        status="SHIPPED",
+    )
 
-
-    # create BOL document
-    bol_doc = Document(doc_type="BOL",
-                       doc_number=file.filename,
-                       file_url=file.filename,
-                       file_hash=file_hash,
-                       owner_id=current_user["user_id"],
-                       buyer_id=tx.buyer_id,
-                       seller_id=current_user["user_id"],
-                       status="SHIPPED",
-                        )
-    
     session.add(bol_doc)
     session.commit()
     session.refresh(bol_doc)
 
-    # create ledger entry 
-    ledger = LedgerEntry(document_id=bol_doc.id,
-                         actor_id=current_user["user_id"],
-                         action="SHIPPED",
-                         extra_data={"transaction_id": transaction_id,"tracking_id": tracking_id,},
-                        )
-    
+    ledger = LedgerEntry(
+        document_id=bol_doc.id,
+        actor_id=current_user["user_id"],
+        action="SHIPPED",
+        extra_data={"transaction_id": transaction_id, "tracking_id": tracking_id},
+    )
+
     session.add(ledger)
     session.commit()
 
@@ -837,14 +852,13 @@ def upload_bol_for_tranaction(transaction_id: int,
     }
 
 
-
 @app.post("/invoice/issue")
-def issue_invoice_for_transaction(transaction_id: int,
-                                    file: UploadFile = File(...),
-                                    current_user: dict = Depends(get_current_user),
-                                    session: Session = Depends(get_session),
-                                ):
-    #  Only seller can issue INVOICE
+def issue_invoice_for_transaction(
+    transaction_id: int,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
     if current_user["role"] != "seller":
         raise HTTPException(status_code=403, detail="Only seller can issue invoice")
 
@@ -852,7 +866,6 @@ def issue_invoice_for_transaction(transaction_id: int,
     if not tx:
         raise HTTPException(status_code=404, detail="Transaction not found")
 
-    # Only if transaction is in_progress
     if tx.status != "in_progress":
         raise HTTPException(status_code=400, detail="Transaction not in progress")
 
@@ -865,26 +878,22 @@ def issue_invoice_for_transaction(transaction_id: int,
         file.content_type,
     )
 
-    document.file_url = public_url
-    document.storage_key = storage_key
-
-
-    # Create INVOICE document
-    invoice_doc = Document(doc_type="INVOICE",
-                            doc_number=file.filename,
-                            file_url=file.filename,
-                            file_hash=file_hash,
-                            owner_id=current_user["user_id"],
-                            buyer_id=tx.buyer_id,
-                            seller_id=current_user["user_id"],
-                            status="ISSUED",
-                            )
+    invoice_doc = Document(
+        doc_type="INVOICE",
+        doc_number=file.filename,
+        file_url=public_url,        # ✅ FIXED
+        storage_key=storage_key,    # ✅ FIXED
+        file_hash=file_hash,
+        owner_id=current_user["user_id"],
+        buyer_id=tx.buyer_id,
+        seller_id=current_user["user_id"],
+        status="ISSUED",
+    )
 
     session.add(invoice_doc)
     session.commit()
     session.refresh(invoice_doc)
 
-    # Create ledger entry linked to transaction
     ledger = LedgerEntry(
         document_id=invoice_doc.id,
         actor_id=current_user["user_id"],
@@ -1600,23 +1609,50 @@ def all_ledger(current_user: dict = Depends(get_current_user), session: Session 
     ]
 
 
-@app.get("/verify-hash")
-def verify_hash(document_id: int, current_user: dict = Depends(get_current_user), session: Session = Depends(get_session)):
-    doc = session.get(Document, document_id)
-    if not doc:
-        raise HTTPException(status_code=404, detail="Not found")
 
-    current_hash = compute_file_hash(doc.file_url)
-    is_valid = current_hash == doc.file_hash
 
-    if not is_valid:
-        doc.is_compromised = True
-        session.add(doc)
-        session.commit()
+@app.get("/auditor/verification-queue")
+def auditor_verification_queue(
+    current_user: dict = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    if current_user["role"] != "auditor":
+        raise HTTPException(status_code=403, detail="Auditor only")
 
-    return {
-        "is_valid": is_valid,
-        "stored_hash": doc.file_hash,
-        "current_hash": current_hash,
-        "checked_at": datetime.utcnow()
-    }
+    # Get PO + LOC docs (you can filter to compromised only if needed)
+    docs = session.exec(
+        select(Document)
+        .where(Document.doc_type.in_(["PO", "LOC"]))
+        .order_by(Document.created_at.desc())
+    ).all()
+
+    results = []
+
+    for d in docs:
+        ledgers = session.exec(
+            select(LedgerEntry)
+            .where(LedgerEntry.document_id == d.id)
+            .order_by(asc(LedgerEntry.created_at))
+        ).all()
+
+        results.append({
+            "id": d.id,
+            "doc_type": d.doc_type,
+            "doc_number": d.doc_number,
+            "owner_id": d.owner_id,
+            "created_at": d.created_at,
+            "file_hash": d.file_hash,
+            "status": d.status,
+            "is_compromised": d.is_compromised,
+            "ledger": [
+                {
+                    "actor_id": l.actor_id,
+                    "action": l.action,
+                    "extra_data": l.extra_data,
+                    "created_at": l.created_at,
+                }
+                for l in ledgers
+            ]
+        })
+
+    return results

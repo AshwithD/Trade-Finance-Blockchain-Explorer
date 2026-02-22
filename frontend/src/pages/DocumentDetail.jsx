@@ -28,7 +28,7 @@ export default function DocumentDetail() {
     const token = localStorage.getItem("accessToken");
 
     api
-      .post("/action", null, {
+      .post("/audit/verify", null, {
         params: { doc_id: id, action },
         headers: { Authorization: `Bearer ${token}` },
       })

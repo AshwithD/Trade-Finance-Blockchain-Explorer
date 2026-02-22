@@ -1,3 +1,4 @@
+import { useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import api from "../services/api";
@@ -5,6 +6,9 @@ import api from "../services/api";
 export default function TransactionDetail() {
   const { id } = useParams();
   const [data, setData] = useState(null);
+  const [file, setFile] = useState(null);
+  const [loadingAction, setLoadingAction] = useState(false);
+  const navigate = useNavigate();
 
   useEffect(() => {
     api.get(`/transaction?id=${id}`)
@@ -15,6 +19,12 @@ export default function TransactionDetail() {
   if (!data) return <div className="p-6 text-gray-600">Loading transaction details...</div>;
 
   const { transaction, documents, ledger } = data;
+  const role = localStorage.getItem("role");
+
+  const hasPO = documents.some(d => d.doc_type === "PO");
+  const hasLOC = documents.some(d => d.doc_type === "LOC");
+  const hasBOL = documents.some(d => d.doc_type === "BOL");
+  const hasInvoice = documents.some(d => d.doc_type === "INVOICE");
 
   const statusBadge = (status) => {
     if (status === "completed") return "bg-green-100 text-green-700 border-green-300";
@@ -34,12 +44,134 @@ export default function TransactionDetail() {
 
   const actionDotColor = (action) => {
     if (action === "ISSUED") return "bg-blue-600";
-    if (action === "VERIFIED") return "bg-purple-600";
-    if (action === "SHIPPED") return "bg-orange-500";
-    if (action === "RECEIVED") return "bg-green-600";
-    if (action === "PAID") return "bg-emerald-600";
+    if (action === "VERIFY") return "bg-purple-600";
+    if (action === "SHIP") return "bg-orange-500";
+    if (action === "RECEIVE") return "bg-green-600";
+    if (action === "PAY") return "bg-emerald-600";
     return "bg-gray-400";
   };
+
+  const createPO = async () => {
+    setLoadingAction(true);
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      await api.post(
+        `/po/create?seller_id=${transaction.seller_id}&currency=${transaction.currency}&amount=${transaction.amount}`,
+        formData
+      );
+      window.location.reload();
+    } catch {
+      alert("Failed to create PO");
+    } finally {
+      setLoadingAction(false);
+    }
+  };
+
+
+
+  const issueLOC = async (poId) => {
+  setLoadingAction(true);
+
+  const formData = new FormData();
+  formData.append("file", file);
+
+  try {
+    await api.post(
+      `/loc/issue?po_id=${poId}`,
+      formData
+    );
+
+    window.location.reload();
+  } catch (err) {
+    console.error(err);
+    alert("Failed to issue LOC");
+  } finally {
+    setLoadingAction(false);
+  }
+};
+
+
+const uploadBOL = async () => {
+  setLoadingAction(true);
+  const formData = new FormData();
+  formData.append("file", file);
+
+  try {
+    await api.post(
+      `/bol/upload?transaction_id=${transaction.id}&tracking_id=TRK123`,
+      formData
+    );
+    window.location.reload();
+  } catch {
+    alert("Failed to upload BOL");
+  } finally {
+    setLoadingAction(false);
+  }
+};
+
+
+
+
+  const issueInvoice = async () => {
+  setLoadingAction(true);
+
+  const formData = new FormData();
+  formData.append("file", file);
+
+  try {
+    await api.post(
+      `/invoice/issue?transaction_id=${transaction.id}`,
+      formData
+    );
+
+    window.location.reload();
+  } catch (err) {
+    alert("Failed to issue invoice");
+  } finally {
+    setLoadingAction(false);
+  }
+  };
+
+
+
+
+  const receiveGoods = async () => {
+  setLoadingAction(true);
+
+  try {
+    const bolDoc = documents.find(d => d.doc_type === "BOL");
+
+    await api.post(`/bol/receive?bol_id=${bolDoc.id}`);
+
+    window.location.reload();
+  } catch {
+    alert("Failed to mark goods as received");
+  } finally {
+    setLoadingAction(false);
+  }
+  };
+
+
+
+
+  const payInvoice = async (invoiceId) => {
+  setLoadingAction(true);
+
+  try {
+    await api.post(`/invoice/pay?invoice_id=${invoiceId}`);
+    alert("✅ Invoice Paid. Transaction Completed.");
+    window.location.reload();
+  } catch (err) {
+    console.error(err);
+    alert("❌ Payment failed.");
+  } finally {
+    setLoadingAction(false);
+  }
+  };
+
+  
 
   return (
     <div className="p-8 max-w-6xl mx-auto space-y-8 bg-gray-50 min-h-screen">
@@ -67,80 +199,133 @@ export default function TransactionDetail() {
         <SummaryCard label="Amount" value={`${transaction.amount} ${transaction.currency}`} color="emerald" />
       </div>
 
-      {/* Documents */}
-      <Card title="📄 Documents" accent="blue">
-        {documents.length === 0 ? (
-          <p className="text-gray-500">No documents uploaded yet.</p>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {documents.map(doc => (
-              <div
-                key={doc.id}
-                className="border-l-4 border-blue-500 rounded-lg p-4 bg-white hover:shadow transition flex items-center gap-3"
+      {/* Actions */}
+      <Card title="⚙️ Available Actions" accent="blue">
+        <div className="space-y-4">
+
+          {role === "buyer" && !hasPO && (
+            <div className="flex gap-3">
+              <input type="file" onChange={(e) => setFile(e.target.files[0])} />
+              <button
+                onClick={createPO}
+                disabled={!file || loadingAction}
+                className="bg-blue-600 text-white px-4 py-2 rounded"
               >
-                <div className="text-2xl">{docIcon(doc.doc_type)}</div>
-                <div>
-                  <p className="font-semibold">
-                    {doc.doc_type}
-                  </p>
-                  <p className="text-sm text-gray-600">Status: {doc.status}</p>
-                  <a
-                    href={`http://127.0.0.1:8000/file?file_url=${doc.file_url}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-block mt-1 text-blue-600 text-sm underline"
+                Create PO
+              </button>
+            </div>
+          )}
+
+          {role === "bank" && hasPO && !hasLOC && (
+            <div className="flex gap-3">
+              <input type="file" onChange={(e) => setFile(e.target.files[0])} />
+              <button
+                onClick={() => issueLOC(documents.find(d => d.doc_type === "PO").id)}
+                disabled={!file || loadingAction}
+                className="bg-indigo-600 text-white px-4 py-2 rounded"
+              >
+                Issue LOC
+              </button>
+            </div>
+          )}
+
+          {role === "auditor" && (
+            <button
+              onClick={() => navigate("/auditor")}
+              className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700"
+            >
+              🔍 Verify in Auditor Panel
+            </button>
+          )}
+
+          {role === "seller" && transaction.status === "in_progress" && (
+            <div className="flex gap-3 flex-col">
+
+              {!hasBOL && (
+                <>
+                  <input type="file" onChange={(e) => setFile(e.target.files[0])} />
+                  <button
+                    onClick={uploadBOL}
+                    disabled={!file || loadingAction}
+                    className="bg-orange-600 text-white px-4 py-2 rounded"
                   >
-                    Download File
-                  </a>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+                    Upload BOL (Ship Goods)
+                  </button>
+                </>
+              )}
+
+              {hasBOL && !hasInvoice && (
+                <>
+                  <input type="file" onChange={(e) => setFile(e.target.files[0])} />
+                  <button
+                    onClick={issueInvoice}
+                    disabled={!file || loadingAction}
+                    className="bg-green-600 text-white px-4 py-2 rounded"
+                  >
+                    Issue Invoice
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
+          {role === "buyer" && hasBOL && transaction.status === "in_progress" && (
+            <button
+              onClick={receiveGoods}
+              disabled={loadingAction}
+              className="bg-green-600 text-white px-4 py-2 rounded"
+            >
+              Mark Goods as Received
+            </button>
+          )}
+
+          {role === "bank" && hasInvoice && transaction.status === "in_progress" && (
+            <button
+              onClick={() => payInvoice(documents.find(d => d.doc_type === "INVOICE").id)}
+              disabled={loadingAction}
+              className="bg-green-600 text-white px-4 py-2 rounded"
+            >
+              Pay Invoice
+            </button>
+          )}
+
+
+        </div>
       </Card>
 
-      {/* Ledger Timeline */}
-      <Card title="🧾 Ledger Timeline" accent="purple">
-        {ledger.length === 0 ? (
-          <p className="text-gray-500">No ledger entries yet.</p>
-        ) : (
-          <div className="relative border-l-2 border-gray-300 pl-6 space-y-6">
-            {ledger.map((entry, index) => (
-              <div key={index} className="relative">
-                {/* Dot */}
-                <div
-                  className={`absolute -left-[9px] top-1.5 h-4 w-4 rounded-full ${actionDotColor(entry.action)}`}
-                />
-
-                <div className="bg-white p-4 rounded-lg shadow-sm">
-                  <p className="font-medium">
-                    {entry.action}
-                  </p>
-
-                  <p className="text-sm text-gray-700">
-                    By {entry.actor_name} ({entry.actor_role}, {entry.actor_org})
-                  </p>
-
-                  <p className="text-xs text-gray-500">
-                    {new Date(entry.created_at).toLocaleString()}
-                  </p>
-
-                  <div className="mt-2 text-sm text-gray-700 space-y-1">
-                    {entry.extra_data?.transaction_id && (
-                      <p>🔗 Transaction: #{entry.extra_data.transaction_id}</p>
-                    )}
-                    {entry.extra_data?.po_id && (
-                      <p>📄 PO ID: #{entry.extra_data.po_id}</p>
-                    )}
-                    {entry.extra_data?.tracking_id && (
-                      <p>📦 Tracking ID: {entry.extra_data.tracking_id}</p>
-                    )}
-                  </div>
-                </div>
+      {/* Documents */}
+      <Card title="📄 Documents" accent="blue">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {documents.map(doc => (
+            <div key={doc.id} className="border-l-4 border-blue-500 p-4 bg-white rounded-lg flex gap-3">
+              <div className="text-2xl">{docIcon(doc.doc_type)}</div>
+              <div>
+                <p className="font-semibold">{doc.doc_type}</p>
+                <p className="text-sm">Status: {doc.status}</p>
               </div>
-            ))}
-          </div>
-        )}
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      {/* Ledger */}
+      <Card title="🧾 Ledger Timeline" accent="purple">
+        <div className="relative border-l-2 border-gray-300 pl-6 space-y-6">
+          {ledger.map((entry, index) => (
+            <div key={index} className="relative">
+              <div className={`absolute -left-[9px] top-2 h-4 w-4 rounded-full ${actionDotColor(entry.action)}`} />
+              <div className="bg-white p-4 rounded shadow">
+                <p className="font-medium">{entry.action}</p>
+                <p className="text-sm text-gray-600">
+                  By {entry.actor_name} ({entry.actor_role})
+                </p>
+                <p className="text-xs text-gray-500">
+                  {new Date(entry.created_at).toLocaleString()}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
       </Card>
     </div>
   );
@@ -174,3 +359,6 @@ function Card({ title, children, accent }) {
     </div>
   );
 }
+
+
+

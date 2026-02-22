@@ -5,111 +5,114 @@ import { Link } from "react-router-dom";
 export default function AuditorVerification() {
   const [docs, setDocs] = useState([]);
   const [ledger, setLedger] = useState([]);
+  const token = localStorage.getItem("accessToken");
 
   useEffect(() => {
-    api.get("/alerts/compromised-documents")
-      .then(res => setDocs(res.data))
-      .catch(console.error);
-
-    api.get("/ledger/all")
-      .then(res => setLedger(res.data))
-      .catch(console.error);
+    fetchVerificationQueue();
+    fetchLedger();
   }, []);
+
+  const fetchVerificationQueue = async () => {
+    try {
+      const res = await api.get("/auditor/verification-queue", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setDocs(res.data);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const fetchLedger = async () => {
+    try {
+      const res = await api.get("/ledger/all", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setLedger(res.data);
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   const verifyDoc = async (id) => {
     try {
-      await api.post("/action", null, {
-        params: { doc_id: id, action: "VERIFY" }
-      });
-      alert("Document verified");
-      window.location.reload();
-    } catch {
-      alert("Verify failed");
+      await api.post(
+        "/audit/verify",
+        {},
+        {
+          params: { po_id: id },
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+
+      alert("✅ PO + LOC verified. Transaction unlocked.");
+      fetchVerificationQueue();
+    } catch (e) {
+      console.error(e);
+      alert("❌ Verify failed. Ensure PO + LOC exist.");
     }
   };
 
   const getLedgerForDoc = (docId) =>
-    ledger.filter(l => l.document_id === docId);
+    ledger.filter((l) => l.document_id === docId);
 
   return (
     <div className="min-h-screen bg-slate-50 p-8">
       <h2 className="text-3xl font-bold mb-6">🕵️ Auditor Verification</h2>
 
-      {/* Documents */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
-        {docs.map((d) => (
-          <div key={d.id} className="bg-white rounded-xl shadow p-6 border">
-            <div className="flex justify-between items-start">
-              <div>
-                <p className="font-semibold text-lg">
-                  TYPE: {d.doc_type} (#{d.id})
-                </p>
-                <p className="text-sm text-gray-600">Created at: {new Date(d.created_at).toLocaleDateString()}</p>
-                <p className="text-sm text-gray-600">Owner: {d.owner_id}</p>
-                <p className="text-sm text-gray-600">Number: {d.doc_number}</p>
-                <p className="text-xs break-all text-gray-500 mt-2">
-                  Hash: {d.file_hash}
-                </p>
-                <p className="text-sm text-gray-600 mt-1">
-                  Issued at: {d.issued_at ? new Date(d.issued_at).toLocaleDateString() : "—"}
-                </p>
+      {docs.length === 0 ? (
+        <p className="text-gray-600">
+          🎉 No documents pending verification.
+        </p>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {docs.map((d) => (
+            <div key={d.id} className="bg-white rounded-xl shadow p-6 border relative">
+
+              {d.doc_type === "PO" && (
+                <button
+                  onClick={() => verifyDoc(d.id)}
+                  className="absolute -top-3 -left-3 bg-indigo-600 text-white px-3 py-1 rounded-full text-xs shadow hover:bg-indigo-700"
+                >
+                  Verify Transaction
+                </button>
+              )}
+
+              <p className="font-semibold text-lg mb-2">
+                {d.doc_type} (#{d.id})
+              </p>
+
+              <p className="text-sm text-gray-600">
+                Owner: {d.owner_id}
+              </p>
+
+              <p className="text-sm text-gray-600">
+                Number: {d.doc_number}
+              </p>
+
+              <span className="inline-block mt-3 text-xs px-2 py-1 bg-yellow-100 text-yellow-700 rounded">
+                Pending Verification
+              </span>
+
+              <div className="mt-6">
+                <h4 className="font-semibold mb-2">Ledger</h4>
+                {getLedgerForDoc(d.id).map((l, i) => (
+                  <div key={i} className="text-sm border-t py-2">
+                    <p><b>{l.action}</b> by User {l.actor_id}</p>
+                  </div>
+                ))}
               </div>
 
-              <button
-                onClick={() => verifyDoc(d.id)}
-                className="bg-blue-600 text-white px-4 py-1.5 rounded hover:bg-blue-700"
+              <Link
+                to={`/document/${d.id}`}
+                className="inline-block mt-4 text-blue-600 text-sm hover:underline"
               >
-                Verify
-              </button>
+                Open full document →
+              </Link>
             </div>
-
-            <span className="inline-block mt-3 text-xs px-2 py-1 bg-red-100 text-red-700 rounded">
-              Integrity Failed
-            </span>
-
-            {/* Ledger table per document */}
-            <div className="mt-6">
-              <h4 className="font-semibold mb-2">Actor Action Document</h4>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm border">
-                  <thead className="bg-gray-100">
-                    <tr>
-                      <th className="p-2 border">Actor</th>
-                      <th className="p-2 border">Action</th>
-                      <th className="p-2 border">Document</th>
-                      <th className="p-2 border">Meta</th>
-                      <th className="p-2 border">Created At</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {getLedgerForDoc(d.id).map((l, i) => (
-                      <tr key={i} className="border-t">
-                        <td className="p-2 border">{l.actor_id}</td>
-                        <td className="p-2 border">{l.action}</td>
-                        <td className="p-2 border">{l.document_id}</td>
-                        <td className="p-2 border text-xs">
-                          {JSON.stringify(l.extra_data || {})}
-                        </td>
-                        <td className="p-2 border">
-                          {new Date(l.created_at).toLocaleString()}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <Link
-              to={`/document/${d.id}`}
-              className="inline-block mt-4 text-blue-600 text-sm hover:underline"
-            >
-              Open full document →
-            </Link>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
