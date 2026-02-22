@@ -4,7 +4,6 @@ import { Link } from "react-router-dom";
 
 export default function AuditorVerification() {
   const [docs, setDocs] = useState([]);
-  const [ledger, setLedger] = useState([]);
   const token = localStorage.getItem("accessToken");
 
   const fetchVerificationQueue = useCallback(async () => {
@@ -18,21 +17,9 @@ export default function AuditorVerification() {
     }
   }, [token]);
 
-  const fetchLedger = useCallback(async () => {
-    try {
-      const res = await api.get("/ledger/all", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      setLedger(res.data);
-    } catch (err) {
-      console.error(err);
-    }
-  }, [token]);
-
   useEffect(() => {
     fetchVerificationQueue();
-    fetchLedger();
-  }, [fetchVerificationQueue, fetchLedger]);
+  }, [fetchVerificationQueue]);
 
   const verifyDoc = async (id) => {
     try {
@@ -62,8 +49,10 @@ export default function AuditorVerification() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {docs.map((d) => (
-            <div key={d.id} className="bg-white rounded-xl shadow p-6 border relative">
-
+            <div
+              key={d.id}
+              className="bg-white rounded-xl shadow p-6 border relative"
+            >
               {d.doc_type === "PO" && (
                 <button
                   onClick={() => verifyDoc(d.id)}
@@ -79,6 +68,10 @@ export default function AuditorVerification() {
 
               <p className="text-sm text-gray-600">
                 Owner: {d.owner_id}
+              </p>
+
+              <p className="text-sm text-gray-600">
+                Status: {d.status}
               </p>
 
               <Link
